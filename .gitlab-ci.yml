@@ -1,0 +1,133 @@
+image: python:3.11
+
+stages:
+  - test
+  - dev
+  - main
+
+
+variables:
+  MAIN_TAG: test_pay
+  DEV_TAG: test_pay
+
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+
+secret_detection:
+  tags:
+    - security
+  variables:
+    SECRET_DETECTION_HISTORIC_SCAN: "true"
+
+dependency_scanning:
+  tags:
+    - security
+  variables:
+    DS_MAX_DEPTH: -1
+
+semgrep-sast:
+  tags:
+    - security
+
+trivy-fs:
+  tags:
+    - security
+  stage: test
+  image:
+    name: aquasec/trivy
+    entrypoint: [""]
+  before_script:
+    - apk add --no-cache python3
+    - trivy plugin install github.com/umax/trivy-plugin-sonarqube
+  script:
+    - trivy filesystem
+      --scanners=vuln,secret,config
+      --vuln-type=library
+      --exit-code=0
+      --format=json
+      --output=trivy-report.json
+      .
+    - trivy sonarqube trivy-report.json > trivy-sonar-report.json
+  artifacts:
+    paths:
+      - trivy-report.json
+      - trivy-sonar-report.json
+    expire_in: 1 weeks
+  allow_failure: true
+  only:
+    - branches
+    - tags
+
+build:
+  stage: test
+  tags:
+    - $DEV_TAG
+  script:
+    - docker-compose -f docker-compose.yml build
+
+test:
+  stage: test
+  script:
+    - docker build --no-cache -t u12_core -f Test .
+
+dev:
+  stage: dev
+  tags:
+    - $DEV_TAG
+  environment:
+    name: test
+    url: https://staging.example.com
+  script:
+    - cp -rf $config config/config.py
+    - docker-compose up -d --build
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev" && $CI_COMMIT_MESSAGE =~ /deploy/'
+      when: manual
+      allow_failure: false
+
+dev_force:
+  stage: test
+  tags:
+    - $DEV_TAG
+  environment:
+    name: test
+    url: https://staging.example.com
+  script:
+    - cp -rf $config config/config.py
+    - docker-compose up -d --build
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev" && $CI_COMMIT_MESSAGE =~ /force/'
+      when: manual
+      allow_failure: false
+
+main:
+  stage: main
+  environment:
+    name: main
+    url: https://staging.example.com
+  tags:
+    - $MAIN_TAG
+  script:
+    - cp -rf $config config/config.py
+    - docker-compose up -d --build
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE =~ /deploy/'
+      when: manual
+      allow_failure: false
+
+main_force:
+  stage: test
+  environment:
+    name: main
+    url: https://staging.example.com
+  tags:
+    - $MAIN_TAG
+  script:
+    - cp -rf $config config/config.py
+    - docker-compose up -d --build
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE =~ /force/'
+      when: manual
+      allow_failure: false
