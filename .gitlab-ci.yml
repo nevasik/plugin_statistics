@@ -5,7 +5,6 @@ stages:
   - dev
   - main
 
-
 variables:
   MAIN_TAG: test_pay
   DEV_TAG: test_pay
